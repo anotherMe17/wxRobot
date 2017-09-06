@@ -6,12 +6,12 @@ import pymysql
 import hashlib
 from bs4 import BeautifulSoup
 
-BASE_URL = "http://m.58.com/chaohui/chuzu/0/pn2/?reform=pcfront&PGTID=0d3090a7-0219-c4de-d604-c0c2ad039f78&ClickID=1"
+BASE_URL = "http://hz.58.com/chuzu/0/pn%s/?PGTID=0d3090a7-0004-f510-04c9-70a976ddf913&ClickID=2"
 mysql_config = {
     'host': '127.0.0.1',
     'port': 3306,
     'user': 'root',
-    'password': '123456',
+    'password': 'root',
     'db': 'zufang',
     'charset': 'utf8mb4',
     'cursorclass': pymysql.cursors.DictCursor,
@@ -53,9 +53,10 @@ class RoomInfoDB(object):
 
 
 def get_zufang_list():
-    url = BASE_URL
-    response = requests.get(url)
-    decode_zufang_list(BeautifulSoup(response.text, "lxml"))
+    for page in range(1, 71):
+        url = BASE_URL % page
+        response = requests.get(url)
+        decode_zufang_list(BeautifulSoup(response.text, "lxml"))
 
 
 def has_logr(logr):
@@ -118,13 +119,17 @@ def write_room_into_db(room):
     leasing_way,lat,lon,money)
     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
     '''
-    with db.cursor() as cursor:
-        cursor.execute(sql,
-                       (md5(room.house_detail_url), room.house_detail_url, room.district,
-                        room.room_size,
-                        room.room_layout, room.room_height, room.room_orientation,
-                        room.pay_way,
-                        room.leasing_way, room.lat, room.lon, room.money))
+    try:
+        with db.cursor() as cursor:
+            cursor.execute(sql,
+                           (md5(room.house_detail_url), room.house_detail_url, room.district,
+                            room.room_size,
+                            room.room_layout, room.room_height, room.room_orientation,
+                            room.pay_way,
+                            room.leasing_way, room.lat, room.lon, room.money))
+    except BaseException as e:
+        print(e)
+        print('error url --> {}'.format(room.house_detail_url))
     db.commit()
 
 
@@ -136,19 +141,18 @@ def md5(encode_str):
 
 def create_room_table():
     sql = '''
-    CREATE TABLE IF NOT EXISTS `room` (
-  `id` varchar(255) NOT NULL,
+    CREATE TABLE `room` (
+  `id` varchar(50) NOT NULL,
   `url` text,
-  `district` varchar(255) DEFAULT NULL,
+  `district` varchar(100) DEFAULT NULL,
   `room_size` int(11) DEFAULT NULL,
-  `room_layout` varchar(255) DEFAULT NULL,
-  `room_height` varchar(255) DEFAULT NULL,
-  `room_orientation` varchar(255) DEFAULT NULL,
-  `pay_way` varchar(255) DEFAULT NULL,
-  `leasing_way` varchar(255) DEFAULT NULL,
+  `room_layout` varchar(100) DEFAULT NULL,
+  `room_height` varchar(100) DEFAULT NULL,
+  `room_orientation` varchar(100) DEFAULT NULL,
+  `pay_way` varchar(100) DEFAULT NULL,
+  `leasing_way` varchar(100) DEFAULT NULL,
   `lat` float DEFAULT NULL,
   `lon` float DEFAULT NULL,
-  `money` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     '''
@@ -158,5 +162,6 @@ def create_room_table():
 
 
 if __name__ == '__main__':
+    # create_room_table()
     get_zufang_list()
     db.close()
