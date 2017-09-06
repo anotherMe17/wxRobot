@@ -1,9 +1,55 @@
 # -*- coding: utf-8 -*-
 import time
 import requests
+import re
+import pymysql
+import hashlib
 from bs4 import BeautifulSoup
 
 BASE_URL = "http://m.58.com/chaohui/chuzu/0/pn2/?reform=pcfront&PGTID=0d3090a7-0219-c4de-d604-c0c2ad039f78&ClickID=1"
+mysql_config = {
+    'host': '127.0.0.1',
+    'port': 3306,
+    'user': 'root',
+    'password': '123456',
+    'db': 'zufang',
+    'charset': 'utf8mb4',
+    'cursorclass': pymysql.cursors.DictCursor,
+}
+# open database
+db = pymysql.connect(**mysql_config)
+
+
+class RoomInfoDB(object):
+    house_detail_url = None
+    money = 0
+    district = None
+    room_size = None
+    room_layout = None
+    room_height = None
+    room_orientation = None
+    pay_way = None
+    leasing_way = None
+    lat = 0
+    lon = 0
+
+    def __init__(self):
+        pass
+
+    def __str__(self):
+        room_str = '-----------------------------------------------------------------------------\n'
+        # room_str += 'url --> {}\n'.format(self.house_detail_url)
+        room_str += '小区 --> {}\n'.format(self.district)
+        room_str += '租金 --> {}\n'.format(self.money)
+        room_str += '房间大小 --> {}\n'.format(self.room_size)
+        room_str += '房间布局 --> {}\n'.format(self.room_layout)
+        room_str += '朝向 --> {}\n'.format(self.room_orientation)
+        room_str += '高度 --> {}\n'.format(self.room_height)
+        room_str += '租赁方式 --> {}\n'.format(self.leasing_way)
+        room_str += '支付方式 --> {}\n'.format(self.pay_way)
+        room_str += '经纬度 --> {} , {}\n'.format(self.lat, self.lon)
+        # print('----------------------------------------------------------------------------------')
+        return room_str
 
 
 def get_zufang_list():
@@ -18,54 +64,99 @@ def has_logr(logr):
 
 def decode_zufang_list(soup):
     for zf in soup.find_all('li', attrs={"logr": has_logr}):
-        print('-----------------------------------------------------')
-        # print(zf.prettify())
         a = zf.find_all('a')
-        print('href --> {0}'.format(a[1]['href']))
-        # print('desc --> {0}'.format(a[1].text.strip()))
-        if len(a) > 3:
-            print('district --> {0}'.format(a[3].text.strip()))
-        room = zf.find('p', class_='room')
-        print('room --> {0}'.format(room.text.strip().replace(' ', '').replace('\n', '')))
-        add = zf.find('p', class_='add')
-        print('add --> {0}'.format(add.text.strip().replace(' ', '').replace('\n', '')))
-        # contract_people = zf.find('p', class_='geren')
-        # print('contract_people --> {0}'.format(contract_people.text.strip()))
-        # money = zf.find('div', class_='money')
-        # print('money --> {0}'.format(money.text.strip()))
         get_room_info(a[1]['href'])
 
 
 def get_room_info(url):
     room_detail_response = requests.get(url)
     room_detail = BeautifulSoup(room_detail_response.text, "lxml")
+    # print(room_detail)
+    # init room
+    room = RoomInfoDB()
+    # set house_detail_url
+    room.house_detail_url = url
+    try:
+        room.money = room_detail.find('b', class_='f36').text
+        room.pay_way = room_detail.find('span', class_='c_333').text
 
-    money = room_detail.find('b', class_='f36')
-    print('money --> {}'.format(money.text))
+        # 小区，楼层，面积，付款方式
+        other_info = room_detail.find('ul', class_='f14').find_all('span')
+        room.leasing_way = other_info[1].text
+        # search layout and size
+        other_info_search = re.search(r'(.*?)\s+(.*?)\s+(.*)', other_info[3].text)
+        if other_info_search is not None:
+            room.room_layout = other_info_search.group(1)
+            room.room_size = other_info_search.group(2)
+        # search orientation and height
+        room_orientation_search = re.search(r'(.*?)\s+(.*)', other_info[5].text)
+        if room_orientation_search is not None:
+            room.room_orientation = room_orientation_search.group(1)
+            room.room_height = room_orientation_search.group(2)
 
-    pat_way = room_detail.find('span', class_='c_333')
-    print('pat_way --> {}'.format(pat_way.text))
+        room.district = room_detail.find('a', class_='c_333 ah').text
 
-    for info in room_detail.find('ul', class_='f14').find_all('li'):
-        print(info.text.strip().replace(' ', '').replace('\n', ''))
+        # house location
+        location = room_detail.find('div', id='ditu')
+        if location is not None:
+            # location might empty
+            a_tag = location.find('a')
+            if a_tag is not None:
+                search_location = re.search(r'location=(.*),(.*)&title', location.find('a')['href'])
+                room.lat = search_location.group(1)
+                room.lon = search_location.group(2)
+        print(room)
+    except AttributeError as e:
+        print(e)
+    write_room_into_db(room)
+    time.sleep(3)
 
-    # print(room_detail.prettify())
-    # room_info = room_detail.find('ul')
-    # print(room_info)
-    # for info in room_detail.select('ul.houseInfo-meta > span'):
-    #     print(' --> {}'.format(info.text.strip().replace(' ', '').replace('\n', '')))
-    # room_equipment = room_detail.find('ul', class_='houseDetail-fac')
-    # print(room_equipment)
-    # for equipment in room_equipment.find_all('i'):
-    #    print(' --> {}'.format(equipment.text.strip().replace(' ', '').replace('\n', '')))
 
-    # desc = room_detail.find('p', class_='panel-description')
-    # print('desc --> {0}'.format(desc.text.strip()))
-    # location = room_detail.find('img', id='mapimg')
-    # print('lon --> {}'.format(location['data-lon']))
-    # print('lat --> {}'.format(location['data-lat']))
-    time.sleep(20)
+def write_room_into_db(room):
+    sql = '''
+    INSERT INTO `room`(id,url,district,room_size,room_layout,room_height,room_orientation,pay_way,
+    leasing_way,lat,lon,money)
+    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+    '''
+    with db.cursor() as cursor:
+        cursor.execute(sql,
+                       (md5(room.house_detail_url), room.house_detail_url, room.district,
+                        room.room_size,
+                        room.room_layout, room.room_height, room.room_orientation,
+                        room.pay_way,
+                        room.leasing_way, room.lat, room.lon, room.money))
+    db.commit()
+
+
+def md5(encode_str):
+    m = hashlib.md5()
+    m.update(encode_str.encode('gb2312'))
+    return m.hexdigest()
+
+
+def create_room_table():
+    sql = '''
+    CREATE TABLE IF NOT EXISTS `room` (
+  `id` varchar(255) NOT NULL,
+  `url` text,
+  `district` varchar(255) DEFAULT NULL,
+  `room_size` int(11) DEFAULT NULL,
+  `room_layout` varchar(255) DEFAULT NULL,
+  `room_height` varchar(255) DEFAULT NULL,
+  `room_orientation` varchar(255) DEFAULT NULL,
+  `pay_way` varchar(255) DEFAULT NULL,
+  `leasing_way` varchar(255) DEFAULT NULL,
+  `lat` float DEFAULT NULL,
+  `lon` float DEFAULT NULL,
+  `money` int(11) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    '''
+    with db.cursor() as cursor:
+        cursor.execute(sql)
+    db.commit()
 
 
 if __name__ == '__main__':
     get_zufang_list()
+    db.close()
