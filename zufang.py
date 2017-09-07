@@ -7,11 +7,20 @@ import hashlib
 from bs4 import BeautifulSoup
 
 BASE_URL = "http://hz.58.com/chuzu/0/pn%s/?PGTID=0d3090a7-0004-f510-04c9-70a976ddf913&ClickID=2"
+
+s = requests.session()
+proxie = {
+    'http': '39.108.76.152:8088'
+}
+header = {
+    'User-Agent': 'Mozilla/5.0 (Windows; U; Windows NT 6.1; en-US) AppleWebKit/534.16 (KHTML, like Gecko)',
+}
+
 mysql_config = {
     'host': '127.0.0.1',
     'port': 3306,
     'user': 'root',
-    'password': 'root',
+    'password': '123456',
     'db': 'zufang',
     'charset': 'utf8mb4',
     'cursorclass': pymysql.cursors.DictCursor,
@@ -55,30 +64,31 @@ class RoomInfoDB(object):
 def get_zufang_list():
     for page in range(1, 71):
         url = BASE_URL % page
-        response = requests.get(url)
-        decode_zufang_list(BeautifulSoup(response.text, "lxml"))
+        response = s.get(url, headers=header, verify=False, proxies=proxie, timeout=20)
+        decode_zufang_list(BeautifulSoup(response.text, "lxml"), page)
 
 
 def has_logr(logr):
     return logr is not None and len(logr) > 26
 
 
-def decode_zufang_list(soup):
+def decode_zufang_list(soup, page):
     for zf in soup.find_all('li', attrs={"logr": has_logr}):
         a = zf.find_all('a')
-        get_room_info(a[1]['href'])
+        get_room_info(a[1]['href'], page)
 
 
-def get_room_info(url):
-    room_detail_response = requests.get(url)
-    room_detail = BeautifulSoup(room_detail_response.text, "lxml")
-    # print(room_detail)
+def get_room_info(url, page):
     # init room
     room = RoomInfoDB()
     # set house_detail_url
     room.house_detail_url = url
     try:
-        room.money = room_detail.find('b', class_='f36').text
+        room_detail_response = s.get(url, headers=header, verify=False, proxies=proxie, timeout=20)
+        room_detail = BeautifulSoup(room_detail_response.text, "lxml")
+        print(room_detail)
+
+        room.money = get_money(room_detail)
         room.pay_way = room_detail.find('span', class_='c_333').text
 
         # 小区，楼层，面积，付款方式
@@ -109,8 +119,22 @@ def get_room_info(url):
         print(room)
     except AttributeError as e:
         print(e)
+        print('page --> {}   # '.format(page), end="")
+        print('error url --> {}'.format(room.house_detail_url))
     write_room_into_db(room)
     time.sleep(3)
+
+
+def get_money(soup):
+    money = soup.find('b', class_='f36')
+    if money is not None:
+        return money.text
+    money = soup.find('ul', class_='houseInfo-detail bbOnepx')
+    if money is not None:
+        money = money.find_all('i')
+        if money is not None:
+            return re.search(r'(.*?)元/月', money[1].text.strip())
+    return 0
 
 
 def write_room_into_db(room):
@@ -163,5 +187,8 @@ def create_room_table():
 
 if __name__ == '__main__':
     # create_room_table()
-    get_zufang_list()
+    get_room_info(
+        'http://short.58.com/zd_m/02ece321-1c3c-442a-b106-da1703a2a924/?target=k-16-xgk_eh_ephv_87765183525399q-feykn&end=end',
+        1)
+    # get_zufang_list()
     db.close()
